@@ -569,10 +569,13 @@ export function useGameLoop() {
         return;
       }
 
+      const hungerRestore = item.hungerRestore ?? 0;
+      const happinessBonus = item.happinessBonus ?? 0;
+      const xpGain = item.levelUp ? getXpForNextLevel(state.level) : (item.xpBonus ?? 0);
+
       void triggerHapticMedium();
       triggerMood('happy', 850);
-      spawnParticle(`${item.emoji} +${item.hungerRestore} Fome`, 'sparkle', 35, 35);
-      const xpGain = item.levelUp ? getXpForNextLevel(state.level) : item.xpBonus;
+      spawnParticle(`${item.emoji} +${hungerRestore} Fome`, 'sparkle', 35, 35);
       spawnParticle(`+${xpGain} XP`, 'xp', 62, 28);
 
       setState((prev) => {
@@ -580,8 +583,8 @@ export function useGameLoop() {
         if (currentQty <= 0) return prev;
         const updated: GameState = {
           ...prev,
-          hunger: clamp(prev.hunger + item.hungerRestore),
-          happiness: clamp(prev.happiness + item.happinessBonus),
+          hunger: clamp(prev.hunger + hungerRestore),
+          happiness: clamp(prev.happiness + happinessBonus),
           inventory: {
             ...prev.inventory,
             [item.id]: currentQty - 1,
