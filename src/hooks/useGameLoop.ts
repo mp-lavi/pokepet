@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createInitialGameState,
+  generateQuests,
   generateShopSlots,
   getFoodById,
   getLineById,
@@ -14,7 +15,10 @@ import {
   FloatingParticle,
   GameState,
   PetMoodAnimation,
+  QuestItem,
+  QuestMetric,
 } from '../types/game';
+import { sound } from '../utils/sound';
 import { triggerHapticMedium } from './usePetSensors';
 
 const STORAGE_KEY = 'pokepet_save_v1';
@@ -67,12 +71,25 @@ function loadSavedState(): GameState {
       parsed.shopSlots = generateShopSlots();
       parsed.shopRefreshesAt = now + SHOP_REFRESH_INTERVAL_MS;
     }
+    parsed.isShiny = Boolean(parsed.isShiny);
+    parsed.quests =
+      Array.isArray(parsed.quests) && parsed.quests.length > 0
+        ? parsed.quests
+        : generateQuests();
     parsed.eggBag = Array.isArray(parsed.eggBag) ? parsed.eggBag : [];
     parsed.lastActiveAt = now;
     return parsed;
   } catch {
     return createInitialGameState();
   }
+}
+
+function advanceQuestsList(quests: QuestItem[], metric: QuestMetric, delta = 1): QuestItem[] {
+  return quests.map((q) =>
+    q.metric === metric && !q.claimed
+      ? { ...q, progress: Math.min(q.target, q.progress + delta) }
+      : q
+  );
 }
 
 export function useGameLoop() {
@@ -275,6 +292,7 @@ export function useGameLoop() {
           finalPokemonId: finalStage.id,
           finalName: finalStage.name,
           type: petLine.type,
+          isShiny: prev.isShiny,
           levelReached: MAX_LEVEL,
           hatchedAt: prev.hatchedAt,
           departedAt: Date.now(),
@@ -412,6 +430,7 @@ export function useGameLoop() {
           happiness: clamp(prev.happiness + happinessDelta),
           coins: prev.coins + (options?.coinsGained ?? 0),
           inventory: nextInv,
+          quests: xpGained > 0 ? advanceQuestsList(prev.quests, 'battle_win', 1) : prev.quests,
           totalInteractions: prev.totalInteractions + 1,
           adventureStage: options?.advanceStage
             ? prev.adventureStage + 1
@@ -573,6 +592,7 @@ export function useGameLoop() {
       const happinessBonus = item.happinessBonus ?? 0;
       const xpGain = item.levelUp ? getXpForNextLevel(state.level) : (item.xpBonus ?? 0);
 
+      sound.playEat();
       void triggerHapticMedium();
       triggerMood('happy', 850);
       spawnParticle(`${item.emoji} +${hungerRestore} Fome`, 'sparkle', 35, 35);
@@ -589,15 +609,93 @@ export function useGameLoop() {
             ...prev.inventory,
             [item.id]: currentQty - 1,
           },
+          quests: advanceQuestsList(prev.quests, 'feed', 1),
           totalInteractions: prev.totalInteractions + 1,
           isDirty: prev.isDirty || Math.random() < 0.16,
         };
         const res = applyXpAndProgress(updated, xpGain);
-        if (res.evolvedTo) showStatus(`Evoluiu para ${res.evolvedTo}!`, 3200);
+        if (res.evolvedTo) {
+          sound.playEvolve();
+          showStatus(`Evoluiu para ${res.evolvedTo}!`, 3200);
+        }
         return res.next;
       });
     },
     [applyXpAndProgress, showStatus, spawnParticle, state.inventory, state.isSleeping, state.level, state.phase, triggerMood]
+  );
+
+  const consumeBattleBerry = useCallback((foodId: string) => {
+    setState((prev) => {
+      const qty = prev.inventory[foodId] ?? 0;
+      if (qty <= 0) return prev;
+      return {
+        ...prev,
+        inventory: { ...prev.inventory, [foodId]: qty - 1 },
+        lastActiveAt: Date.now(),
+      };
+    });
+  }, []);
+
+  const finishMinigame = useCallback(
+    (score: number) => {
+      const happinessGain = Math.min(32, 12 + score * 2);
+      const coinsGain = score * 2;
+      sound.playVictory();
+      void triggerHapticMedium();
+      triggerMood('somersault', 850);
+      spawnParticle(`😄 +${happinessGain} Feliz`, 'heart', 40, 34);
+      if (coinsGain > 0) {
+        spawnParticle(`🪙 +${coinsGain}`, 'sparkle', 65, 28);
+      }
+      showStatus(`Mini-game: ${score} pts! (+${happinessGain}❤️, +${coinsGain}🪙)`, 3000);
+
+      setState((prev) => ({
+        ...prev,
+        happiness: clamp(prev.happiness + happinessGain),
+        energy: clamp(prev.energy - 10),
+        hunger: clamp(prev.hunger - 4),
+        coins: prev.coins + coinsGain,
+        quests: advanceQuestsList(prev.quests, 'minigame', 1),
+        totalInteractions: prev.totalInteractions + 1,
+        lastActiveAt: Date.now(),
+      }));
+    },
+    [showStatus, spawnParticle, triggerMood]
+  );
+
+  const claimQuest = useCallback(
+    (questId: string) => {
+      sound.playQuestClaim();
+      void triggerHapticMedium();
+      setState((prev) => {
+        const targetQuest = prev.quests.find((q) => q.id === questId);
+        if (!targetQuest || targetQuest.claimed || targetQuest.progress < targetQuest.target) {
+          return prev;
+        }
+        const nextInv = { ...prev.inventory };
+        if (targetQuest.rewardBerryId) {
+          nextInv[targetQuest.rewardBerryId] =
+            (nextInv[targetQuest.rewardBerryId] ?? 0) + 1;
+        }
+        const updatedQuests = prev.quests.map((q) =>
+          q.id === questId ? { ...q, claimed: true } : q
+        );
+        const allClaimed = updatedQuests.every((q) => q.claimed);
+        showStatus(
+          allClaimed
+            ? 'Todas as missões concluídas! Novas missões chegaram!'
+            : `Recompensa resgatada: +${targetQuest.rewardCoins}🪙!`
+        );
+        return {
+          ...prev,
+          coins: prev.coins + targetQuest.rewardCoins,
+          inventory: nextInv,
+          quests: allClaimed ? generateQuests() : updatedQuests,
+          lastActiveAt: Date.now(),
+        };
+      });
+    },
+    [showStatus]
   );
 
   const play = useCallback(() => {
@@ -671,6 +769,7 @@ export function useGameLoop() {
       spawnParticle('+12 XP', 'xp', 62, 26);
     }
 
+    sound.playPet();
     triggerMood('happy', 750);
     spawnParticle('❤️', 'heart', 35 + Math.random() * 30, 28 + Math.random() * 20);
 
@@ -678,6 +777,7 @@ export function useGameLoop() {
       const updated: GameState = {
         ...prev,
         happiness: clamp(prev.happiness + 4),
+        quests: advanceQuestsList(prev.quests, 'pet', 1),
         totalInteractions: prev.totalInteractions + 1,
       };
       if (!canGrantXp) return { ...updated, lastActiveAt: now };
@@ -769,6 +869,9 @@ export function useGameLoop() {
       buyFood,
       refreshShop,
       useEvolutionStone,
+      consumeBattleBerry,
+      finishMinigame,
+      claimQuest,
       play,
       toggleSleep,
       cleanAndHeal,

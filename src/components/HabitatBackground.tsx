@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { PokemonType } from '../types/game';
 
 interface HabitatBackgroundProps {
@@ -18,6 +18,17 @@ const FALLBACK_GRADIENTS: Record<PokemonType | 'egg', string> = {
   fairy: 'from-purple-950 via-pink-900 to-rose-950',
 };
 
+const AMBIENT_SYMBOL: Record<PokemonType | 'egg', string> = {
+  egg: '✨',
+  fire: '🔥',
+  grass: '🍃',
+  water: '🫧',
+  electric: '⚡',
+  ghost: '👻',
+  dragon: '⭐',
+  fairy: '🌸',
+};
+
 export function HabitatBackground({ type, isEgg, isSleeping }: HabitatBackgroundProps) {
   const key = isEgg ? 'egg' : type;
   const [imgError, setImgError] = useState(false);
@@ -25,6 +36,18 @@ export function HabitatBackground({ type, isEgg, isSleeping }: HabitatBackground
   useEffect(() => {
     setImgError(false);
   }, [key]);
+
+  const weatherParticles = useMemo(
+    () =>
+      Array.from({ length: 8 }, (_, i) => ({
+        id: i,
+        left: `${10 + ((i * 11) % 82)}%`,
+        top: `${14 + ((i * 17) % 62)}%`,
+        delay: `${(i * 0.65).toFixed(2)}s`,
+        duration: `${3.2 + (i % 3) * 1.1}s`,
+      })),
+    []
+  );
 
   return (
     <div
@@ -42,6 +65,24 @@ export function HabitatBackground({ type, isEgg, isSleeping }: HabitatBackground
           draggable={false}
         />
       )}
+
+      {/* Subtle ambient weather particles matching habitat */}
+      {!isSleeping &&
+        weatherParticles.map((p) => (
+          <span
+            key={p.id}
+            style={{
+              left: p.left,
+              top: p.top,
+              animationDelay: p.delay,
+              animationDuration: p.duration,
+            }}
+            className="absolute animate-pulse text-xs opacity-55 drop-shadow"
+          >
+            {AMBIENT_SYMBOL[key]}
+          </span>
+        ))}
+
       {/* Subtle bottom vignette so the pet sprite & HUD pop cleanly */}
       <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 via-transparent to-slate-950/25" />
     </div>

@@ -1,24 +1,30 @@
 import { useState } from 'react';
-import { Backpack, Coins, Smartphone, Sparkles } from 'lucide-react';
+import { Backpack, ClipboardList, Coins, Smartphone, Sparkles, Volume2, VolumeX } from 'lucide-react';
 import { ActionDeck } from './components/ActionDeck';
 import { BackpackModal } from './components/BackpackModal';
 import { BattleArena } from './components/BattleArena';
 import { EggStage } from './components/EggStage';
 import { HabitatBackground } from './components/HabitatBackground';
 import { HallOfFameModal } from './components/HallOfFameModal';
+import { PlayMinigame } from './components/PlayMinigame';
 import { PokedexIcon } from './components/PokedexIcon';
 import { PokemonSprite } from './components/PokemonSprite';
+import { QuestsModal } from './components/QuestsModal';
 import { ShopModal } from './components/ShopModal';
 import { StarterEggPicker } from './components/StarterEggPicker';
 import { StatusBars } from './components/StatusBars';
 import { useGameLoop } from './hooks/useGameLoop';
 import { usePetSensors } from './hooks/usePetSensors';
+import { sound } from './utils/sound';
 
 export function App() {
   const [hallOpen, setHallOpen] = useState(false);
   const [shopOpen, setShopOpen] = useState(false);
   const [bagOpen, setBagOpen] = useState(false);
+  const [questsOpen, setQuestsOpen] = useState(false);
   const [inBattle, setInBattle] = useState(false);
+  const [inMinigame, setInMinigame] = useState(false);
+  const [muted, setMuted] = useState(() => sound.isMuted());
 
   const {
     state,
@@ -39,6 +45,7 @@ export function App() {
   const sensors = usePetSensors({
     enabled:
       !inBattle &&
+      !inMinigame &&
       ((state.phase === 'egg' && state.starterChosen) || state.phase === 'pet'),
     onPet: actions.handlePet,
     onPoke: actions.handlePoke,
@@ -46,6 +53,9 @@ export function App() {
   });
 
   const isEgg = state.phase === 'egg';
+  const hasClaimableQuest = state.quests.some(
+    (q) => !q.claimed && q.progress >= q.target
+  );
 
   const handleStartAdventure = () => {
     if (state.phase !== 'pet' || state.isSleeping) return;
@@ -54,6 +64,15 @@ export function App() {
       return;
     }
     setInBattle(true);
+  };
+
+  const handleStartMinigame = () => {
+    if (state.phase !== 'pet' || state.isSleeping) return;
+    if (state.energy < 10) {
+      actions.awardBattleResult(0, 0, 0, 'Sem energia para brincar! Descanse primeiro.');
+      return;
+    }
+    setInMinigame(true);
   };
 
   return (
@@ -86,12 +105,24 @@ export function App() {
               <p className="mt-0.5 text-[10px] font-semibold text-slate-300 leading-none">
                 {isEgg
                   ? 'Ovo Misterioso'
-                  : `${currentStage.name} • ${line.type.toUpperCase()}`}
+                  : `${state.isShiny ? '✨ ' : ''}${currentStage.name} • ${line.type.toUpperCase()}`}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setQuestsOpen(true)}
+              title="Missões"
+              className="relative flex items-center justify-center rounded-xl bg-slate-950/60 p-1.5 text-amber-200 ring-1 ring-amber-400/35 backdrop-blur-md transition hover:bg-slate-900/80 active:scale-95"
+            >
+              <ClipboardList className="h-3.5 w-3.5" />
+              {hasClaimableQuest && (
+                <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-400 ring-2 ring-slate-950 animate-ping" />
+              )}
+            </button>
+
             <button
               type="button"
               onClick={() => setBagOpen(true)}
@@ -113,6 +144,19 @@ export function App() {
             >
               <Coins className="h-3.5 w-3.5 text-amber-300" />
               <span>{state.coins}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMuted(sound.toggleMute())}
+              title={muted ? 'Ativar Som' : 'Silenciar Som'}
+              className="flex items-center justify-center rounded-xl bg-slate-950/60 p-1.5 text-slate-200 ring-1 ring-white/15 backdrop-blur-md transition hover:bg-slate-900/80 active:scale-95"
+            >
+              {muted ? (
+                <VolumeX className="h-3.5 w-3.5 text-slate-400" />
+              ) : (
+                <Volume2 className="h-3.5 w-3.5 text-sky-300" />
+              )}
             </button>
 
             <button
@@ -152,16 +196,30 @@ export function App() {
 
       {/* Interactive Center-Bottom Ground Stage */}
       <main
-        {...(!inBattle ? sensors.gestureHandlers : {})}
+        {...(!inBattle && !inMinigame ? sensors.gestureHandlers : {})}
         className="relative z-10 flex flex-1 flex-col items-center justify-end pb-5 touch-none"
       >
-        {inBattle && state.phase === 'pet' ? (
+        {inMinigame && state.phase === 'pet' ? (
+          <PlayMinigame
+            pokemonName={currentStage.name}
+            onFinish={(score) => {
+              setInMinigame(false);
+              actions.finishMinigame(score);
+            }}
+            onCancel={() => setInMinigame(false)}
+          />
+        ) : inBattle && state.phase === 'pet' ? (
           <BattleArena
             adventureStage={state.adventureStage}
             playerLineId={line.lineId}
             playerStage={currentStage}
             playerType={line.type}
             playerLevel={state.level}
+            playerShiny={state.isShiny}
+            playerHappiness={state.happiness}
+            playerHunger={state.hunger}
+            inventory={state.inventory}
+            onUseBattleBerry={actions.consumeBattleBerry}
             onStageClear={({
               xpGained,
               coinsGained,
@@ -267,6 +325,7 @@ export function App() {
                     mood={mood}
                     isSleeping={state.isSleeping}
                     isDirty={state.isDirty}
+                    isShiny={state.isShiny}
                     tilt={sensors.tilt}
                     autonomousX={autonomousX}
                     facingRight={facingRight}
@@ -313,11 +372,11 @@ export function App() {
           phase={state.phase}
           isSleeping={state.isSleeping}
           isDirty={state.isDirty}
-          inBattle={inBattle}
+          inBattle={inBattle || inMinigame}
           inventory={state.inventory}
           onFeed={actions.feed}
           onOpenShop={() => setShopOpen(true)}
-          onPlay={actions.play}
+          onPlay={handleStartMinigame}
           onAdventure={handleStartAdventure}
           onToggleSleep={actions.toggleSleep}
           onClean={actions.cleanAndHeal}
@@ -355,6 +414,13 @@ export function App() {
         onUseFood={actions.feed}
         onUseStone={actions.useEvolutionStone}
         onClose={() => setBagOpen(false)}
+      />
+
+      <QuestsModal
+        open={questsOpen}
+        quests={state.quests}
+        onClaim={actions.claimQuest}
+        onClose={() => setQuestsOpen(false)}
       />
     </div>
   );

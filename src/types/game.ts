@@ -83,16 +83,31 @@ export interface HallOfFameEntry {
   finalPokemonId: number;
   finalName: string;
   type: PokemonType;
+  isShiny?: boolean;
   levelReached: number;
   hatchedAt: number;
   departedAt: number;
   totalInteractions: number;
 }
 
+export type QuestMetric = 'battle_win' | 'feed' | 'pet' | 'minigame';
+
+export interface QuestItem {
+  id: string;
+  title: string;
+  metric: QuestMetric;
+  target: number;
+  progress: number;
+  rewardCoins: number;
+  rewardBerryId?: string;
+  claimed: boolean;
+}
+
 export interface GameState {
   phase: PetPhase;
   lineId: string;
   stageIndex: 0 | 1 | 2;
+  isShiny: boolean;
   level: number;
   xp: number;
   hunger: number; // 0..100
@@ -110,6 +125,7 @@ export interface GameState {
   inventory: Record<string, number>;
   shopSlots: ShopSlot[];
   shopRefreshesAt: number;
+  quests: QuestItem[];
   eggBag: string[]; // lineIds of bonus eggs dropped by Bosses
   hallOfFame: HallOfFameEntry[];
 }

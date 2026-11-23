@@ -10,6 +10,7 @@ interface PokemonSpriteProps {
   mood: PetMoodAnimation;
   isSleeping: boolean;
   isDirty: boolean;
+  isShiny?: boolean;
   tilt: TiltOffset;
   autonomousX?: number;
   facingRight?: boolean;
@@ -24,6 +25,7 @@ export function PokemonSprite({
   mood,
   isSleeping,
   isDirty,
+  isShiny = false,
   tilt,
   autonomousX = 0,
   facingRight = false,
@@ -59,8 +61,8 @@ export function PokemonSprite({
 
   const imgSrc =
     srcMode === 'animated'
-      ? getAnimatedSpriteUrl(pokemonId)
-      : getStaticSpriteUrl(pokemonId);
+      ? getAnimatedSpriteUrl(pokemonId, isShiny)
+      : getStaticSpriteUrl(pokemonId, isShiny);
 
   return (
     <div

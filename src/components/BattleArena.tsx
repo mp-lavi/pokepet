@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Crown, Egg } from 'lucide-react';
+import { Crown, Egg, HeartPulse } from 'lucide-react';
 import {
   getAnimatedSpriteUrl,
   getMovesForLine,
@@ -13,6 +13,7 @@ import {
 } from '../data/pokemonData';
 import { triggerHapticMedium, triggerHapticVibrate } from '../hooks/usePetSensors';
 import { PokemonMove, PokemonStage, PokemonType } from '../types/game';
+import { sound } from '../utils/sound';
 
 interface BattleArenaProps {
   adventureStage: number;
@@ -20,6 +21,11 @@ interface BattleArenaProps {
   playerStage: PokemonStage;
   playerType: PokemonType;
   playerLevel: number;
+  playerShiny: boolean;
+  playerHappiness: number;
+  playerHunger: number;
+  inventory: Record<string, number>;
+  onUseBattleBerry: (foodId: string) => void;
   onStageClear: (result: {
     xpGained: number;
     coinsGained: number;
@@ -40,22 +46,24 @@ function BattleSprite({
   hit,
   flip,
   isBoss,
+  isShiny = false,
 }: {
   id: number;
   name: string;
   hit: boolean;
   flip?: boolean;
   isBoss?: boolean;
+  isShiny?: boolean;
 }) {
   const [useStatic, setUseStatic] = useState(false);
 
   useEffect(() => {
     setUseStatic(false);
-  }, [id]);
+  }, [id, isShiny]);
 
   return (
     <img
-      src={useStatic ? getStaticSpriteUrl(id) : getAnimatedSpriteUrl(id)}
+      src={useStatic ? getStaticSpriteUrl(id, isShiny) : getAnimatedSpriteUrl(id, isShiny)}
       alt={name}
       onError={() => setUseStatic(true)}
       className={`object-contain drop-shadow-[0_8px_14px_rgba(0,0,0,0.55)] transition-transform duration-150 ${
@@ -92,6 +100,11 @@ export function BattleArena({
   playerStage,
   playerType,
   playerLevel,
+  playerShiny,
+  playerHappiness,
+  playerHunger,
+  inventory,
+  onUseBattleBerry,
   onStageClear,
   onDefeat,
   onExit,
@@ -121,24 +134,76 @@ export function BattleArena({
   );
 
   const playerMoves = getMovesForLine(playerLineId, playerType);
+  const healBerryId =
+    (inventory.sitrus ?? 0) > 0
+      ? 'sitrus'
+      : (inventory.oran ?? 0) > 0
+      ? 'oran'
+      : null;
 
   const calcDamage = (
     move: PokemonMove,
     attackerPower: number,
     attackerType: PokemonType,
-    defenderType: PokemonType
+    defenderType: PokemonType,
+    isPlayer: boolean
   ) => {
     if (Math.random() * 100 > move.accuracy) {
-      return { damage: 0, eff: 1, missed: true, immune: false };
+      return { damage: 0, eff: 1, missed: true, immune: false, crit: false };
     }
     const eff = getTypeEffectiveness(move.type, defenderType);
     if (eff === 0) {
-      return { damage: 0, eff: 0, missed: false, immune: true };
+      return { damage: 0, eff: 0, missed: false, immune: true, crit: false };
     }
     const stab = move.type === attackerType ? 1.2 : 1;
+    const careMod = isPlayer
+      ? (playerHappiness >= 70 ? 1.12 : 1) * (playerHunger <= 25 ? 0.85 : 1)
+      : 1;
+    const critChance = isPlayer && playerHappiness >= 70 ? 0.18 : 0.06;
+    const crit = Math.random() < critChance;
     const variance = 0.85 + Math.random() * 0.3;
-    const raw = ((move.power + attackerPower * 0.65) * stab * eff * variance) / 2.4;
-    return { damage: Math.max(4, Math.round(raw)), eff, missed: false, immune: false };
+    const raw =
+      ((move.power + attackerPower * 0.65) * stab * eff * careMod * (crit ? 1.5 : 1) * variance) /
+      2.4;
+    return { damage: Math.max(4, Math.round(raw)), eff, missed: false, immune: false, crit };
+  };
+
+  const triggerEnemyTurn = (currentPlayerHp: number, prefixLog?: string) => {
+    window.setTimeout(() => {
+      const enemyMove =
+        opponent.moves[Math.floor(Math.random() * opponent.moves.length)];
+      const eRes = calcDamage(enemyMove, opponent.power, opponent.type, playerType, false);
+
+      if (eRes.missed) {
+        setLog(`${prefixLog ? `${prefixLog} ` : ''}${opponent.name} usou ${enemyMove.name}, mas errou!`);
+        setBusy(false);
+        return;
+      }
+      if (eRes.immune) {
+        setLog(`${prefixLog ? `${prefixLog} ` : ''}${opponent.name} usou ${enemyMove.name}... Não teve efeito!`);
+        setBusy(false);
+        return;
+      }
+
+      sound.playHit(eRes.eff > 1.1);
+      void triggerHapticVibrate(90);
+      setPlayerHit(true);
+      window.setTimeout(() => setPlayerHit(false), 380);
+
+      const nextPlayerHp = Math.max(0, currentPlayerHp - eRes.damage);
+      setPlayerHp(nextPlayerHp);
+      setLog(`${opponent.name} usou ${enemyMove.name}! (-${eRes.damage} HP)`);
+
+      if (nextPlayerHp <= 0) {
+        window.setTimeout(() => {
+          onDefeat(
+            `${playerStage.name} foi derrotado na Fase ${stageNum}! (-22⚡, -12❤️)`
+          );
+        }, 950);
+      } else {
+        setBusy(false);
+      }
+    }, 750);
   };
 
   const handleMove = (move: PokemonMove) => {
@@ -146,13 +211,14 @@ export function BattleArena({
     setBusy(true);
 
     const playerAtk = playerStage.basePower + playerLevel * 2.2;
-    const res = calcDamage(move, playerAtk, playerType, opponent.type);
+    const res = calcDamage(move, playerAtk, playerType, opponent.type, true);
 
     if (res.missed) {
       setLog(`${playerStage.name} usou ${move.name}, mas errou!`);
     } else if (res.immune) {
       setLog(`${playerStage.name} usou ${move.name}... Não teve efeito! (Imune)`);
     } else {
+      sound.playHit(res.eff > 1.1 || res.crit);
       void triggerHapticMedium();
       setEnemyHit(true);
       window.setTimeout(() => setEnemyHit(false), 380);
@@ -166,7 +232,8 @@ export function BattleArena({
           : res.eff < 0.9
           ? ' Pouco efetivo...'
           : '';
-      setLog(`${playerStage.name} usou ${move.name}!${effText} (-${res.damage} HP)`);
+      const critText = res.crit ? ' 💥 CRÍTICO!' : '';
+      setLog(`${playerStage.name} usou ${move.name}!${critText}${effText} (-${res.damage} HP)`);
 
       if (nextEnemyHp <= 0) {
         const xpReward = (opponent.isBoss ? 65 : 32) + opponent.level * 5;
@@ -178,6 +245,7 @@ export function BattleArena({
         const droppedStone = rollAdventureStoneDrop(opponent.isBoss);
 
         window.setTimeout(() => {
+          sound.playVictory();
           void triggerHapticMedium();
           setBusy(false);
           setVictoryInfo({
@@ -197,48 +265,48 @@ export function BattleArena({
       }
     }
 
-    // Enemy counter-attack
-    window.setTimeout(() => {
-      const enemyMove =
-        opponent.moves[Math.floor(Math.random() * opponent.moves.length)];
-      const eRes = calcDamage(enemyMove, opponent.power, opponent.type, playerType);
+    triggerEnemyTurn(playerHp);
+  };
 
-      if (eRes.missed) {
-        setLog(`${opponent.name} usou ${enemyMove.name}, mas errou!`);
-        setBusy(false);
-        return;
-      }
-      if (eRes.immune) {
-        setLog(`${opponent.name} usou ${enemyMove.name}... Não teve efeito!`);
-        setBusy(false);
-        return;
-      }
-
-      void triggerHapticVibrate(90);
-      setPlayerHit(true);
-      window.setTimeout(() => setPlayerHit(false), 380);
-
-      const nextPlayerHp = Math.max(0, playerHp - eRes.damage);
-      setPlayerHp(nextPlayerHp);
-      setLog(`${opponent.name} usou ${enemyMove.name}! (-${eRes.damage} HP)`);
-
-      if (nextPlayerHp <= 0) {
-        window.setTimeout(() => {
-          onDefeat(
-            `${playerStage.name} foi derrotado na Fase ${stageNum}! (-22⚡, -12❤️)`
-          );
-        }, 950);
-      } else {
-        setBusy(false);
-      }
-    }, 750);
+  const handleBattleHeal = () => {
+    if (busy || victoryInfo || !healBerryId || playerHp >= playerMaxHp) return;
+    setBusy(true);
+    const healAmount = healBerryId === 'sitrus' ? 50 : 28;
+    const healedHp = Math.min(playerMaxHp, playerHp + healAmount);
+    setPlayerHp(healedHp);
+    onUseBattleBerry(healBerryId);
+    sound.playEat();
+    const label = healBerryId === 'sitrus' ? 'Sitrus Berry' : 'Oran Berry';
+    setLog(`${playerStage.name} comeu ${label} (+${healedHp - playerHp} HP)!`);
+    triggerEnemyTurn(healedHp);
   };
 
   const handleNextOrReturn = (continueNext: boolean) => {
     if (!victoryInfo) return;
+
+    // Random Adventure Event when advancing!
+    let bonusCoins = 0;
+    let eventBanner = '';
+    let nextHp = playerHp;
+
+    if (continueNext) {
+      const eventRoll = Math.random();
+      if (eventRoll < 0.16) {
+        const heal = Math.round(playerMaxHp * 0.35);
+        nextHp = Math.min(playerMaxHp, playerHp + heal);
+        eventBanner = `♨️ Fonte Termal! (+${nextHp - playerHp} HP) `;
+      } else if (eventRoll < 0.32) {
+        bonusCoins = 25 + Math.floor(Math.random() * 20);
+        eventBanner = `🎁 Baú encontrado! (+${bonusCoins}🪙) `;
+      } else if (eventRoll < 0.42 && playerHp > 14) {
+        nextHp = Math.max(8, playerHp - 10);
+        eventBanner = `⚠️ Emboscada no caminho! (-10 HP) `;
+      }
+    }
+
     onStageClear({
       xpGained: victoryInfo.xpGained,
-      coinsGained: victoryInfo.coinsGained,
+      coinsGained: victoryInfo.coinsGained + bonusCoins,
       happinessGained: victoryInfo.happinessGained,
       defeatedName: opponent.name,
       droppedEggLineId: victoryInfo.droppedEggLineId,
@@ -252,12 +320,15 @@ export function BattleArena({
       const nextOpp = spawnWildOpponent(nextStage, playerLevel, playerStage.id);
       setStageNum(nextStage);
       setOpponent(nextOpp);
+      setPlayerHp(nextHp);
       setEnemyHp(nextOpp.maxHp);
       setVictoryInfo(null);
       setLog(
-        nextOpp.isBoss
-          ? `CHEFE! ${nextOpp.name} evoluído (Nv.${nextOpp.level}) apareceu!`
-          : `Fase ${nextStage}: Um ${nextOpp.name} selvagem (Nv.${nextOpp.level}) apareceu!`
+        `${eventBanner}${
+          nextOpp.isBoss
+            ? `CHEFE! ${nextOpp.name} evoluído (Nv.${nextOpp.level}) apareceu!`
+            : `Fase ${nextStage}: Um ${nextOpp.name} selvagem (Nv.${nextOpp.level}) apareceu!`
+        }`
       );
     }
   };
@@ -265,7 +336,7 @@ export function BattleArena({
   return (
     <div className="relative z-20 flex h-full w-full flex-col justify-between p-3">
       {/* Stage Counter Banner */}
-      <div className="flex items-center justify-center">
+      <div className="flex items-center justify-center gap-2">
         <div
           className={`flex items-center gap-1.5 rounded-full px-3 py-0.5 text-[10px] font-extrabold tracking-wide ring-1 backdrop-blur-sm ${
             opponent.isBoss
@@ -278,6 +349,11 @@ export function BattleArena({
             {opponent.isBoss ? `FASE ${stageNum} • CHEFE` : `AVENTURA • FASE ${stageNum}`}
           </span>
         </div>
+        {playerHappiness >= 70 && (
+          <span className="rounded-full bg-pink-500/20 px-2 py-0.5 text-[9px] font-bold text-pink-200 ring-1 ring-pink-400/35">
+            💖 Vínculo +Crítico
+          </span>
+        )}
       </div>
 
       {/* Top Enemy Row */}
@@ -310,12 +386,21 @@ export function BattleArena({
       {/* Bottom Player Row */}
       <div className="flex items-end justify-between gap-2">
         <div className="flex flex-1 items-center justify-center">
-          <BattleSprite id={playerStage.id} name={playerStage.name} hit={playerHit} flip />
+          <BattleSprite
+            id={playerStage.id}
+            name={playerStage.name}
+            hit={playerHit}
+            isShiny={playerShiny}
+            flip
+          />
         </div>
 
         <div className="w-36 rounded-2xl bg-slate-950/75 p-2 ring-1 ring-white/15 backdrop-blur-sm">
           <div className="flex items-center justify-between text-xs font-bold text-white">
-            <span className="truncate">{playerStage.name}</span>
+            <span className="truncate">
+              {playerShiny ? '✨ ' : ''}
+              {playerStage.name}
+            </span>
             <span className="text-[10px] text-amber-300">Nv.{playerLevel}</span>
           </div>
           <span className="mb-1 inline-block text-[9px] font-bold uppercase tracking-wider text-slate-400">
@@ -368,10 +453,21 @@ export function BattleArena({
         </div>
       ) : (
         <div className="flex flex-col gap-1.5 rounded-2xl bg-slate-950/85 p-2.5 ring-1 ring-white/15 backdrop-blur-md">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-between gap-1.5">
             <p className="flex-1 text-[11px] font-semibold text-slate-100 leading-tight">
               {log}
             </p>
+            {healBerryId && playerHp < playerMaxHp && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={handleBattleHeal}
+                className="flex shrink-0 items-center gap-1 rounded-lg bg-emerald-500/25 px-2 py-1 text-[10px] font-bold text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-500/35 disabled:opacity-40"
+              >
+                <HeartPulse className="h-3 w-3" />
+                <span>{healBerryId === 'sitrus' ? '🍋 +50' : '🫐 +28'}</span>
+              </button>
+            )}
             <button
               type="button"
               disabled={busy}

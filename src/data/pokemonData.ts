@@ -1,4 +1,4 @@
-import { EvolutionaryLine, GameState, PokemonMove, PokemonStage, PokemonType, ShopItem, ShopSlot } from '../types/game';
+import { EvolutionaryLine, GameState, PokemonMove, PokemonStage, PokemonType, QuestItem, ShopItem, ShopSlot } from '../types/game';
 
 export const STARTER_LINE_IDS = ['charmander', 'bulbasaur', 'squirtle'] as const;
 export const SHOP_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -124,12 +124,63 @@ export function pickRandomLine(excludeLineId?: string): EvolutionaryLine {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-export function getAnimatedSpriteUrl(id: number): string {
-  return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
+export function getAnimatedSpriteUrl(id: number, isShiny = false): string {
+  return isShiny
+    ? `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/${id}.png`
+    : `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
 }
 
-export function getStaticSpriteUrl(id: number): string {
-  return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/home/${id}.png`;
+export function getStaticSpriteUrl(id: number, isShiny = false): string {
+  return isShiny
+    ? `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/home/shiny/${id}.png`
+    : `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/home/${id}.png`;
+}
+
+export function generateQuests(): QuestItem[] {
+  const templates: Array<Omit<QuestItem, 'id' | 'progress' | 'claimed'>> = [
+    {
+      title: 'Vença 2 batalhas na Aventura',
+      metric: 'battle_win',
+      target: 2,
+      rewardCoins: 45,
+      rewardBerryId: 'sitrus',
+    },
+    {
+      title: 'Alimente seu Pokémon 2 vezes',
+      metric: 'feed',
+      target: 2,
+      rewardCoins: 30,
+      rewardBerryId: 'oran',
+    },
+    {
+      title: 'Faça carinho 3 vezes no pet',
+      metric: 'pet',
+      target: 3,
+      rewardCoins: 25,
+    },
+    {
+      title: 'Jogue o mini-game Brincar 1 vez',
+      metric: 'minigame',
+      target: 1,
+      rewardCoins: 35,
+      rewardBerryId: 'oran',
+    },
+    {
+      title: 'Vença 4 batalhas na Aventura',
+      metric: 'battle_win',
+      target: 4,
+      rewardCoins: 85,
+      rewardBerryId: 'poffin',
+    },
+  ];
+
+  const shuffled = [...templates].sort(() => Math.random() - 0.5).slice(0, 3);
+  return shuffled.map((t, idx) => ({
+    ...t,
+    id: `q-${Date.now()}-${idx}`,
+    progress: 0,
+    claimed: false,
+  }));
 }
 
 export function createInitialGameState(
@@ -145,6 +196,7 @@ export function createInitialGameState(
     phase: 'egg',
     lineId: forcedLineId ? line.lineId : 'charmander',
     stageIndex: 0,
+    isShiny: Math.random() < 0.08,
     level: 1,
     xp: 0,
     hunger: 85,
@@ -162,6 +214,7 @@ export function createInitialGameState(
     inventory: { oran: 3, sitrus: 1 },
     shopSlots: generateShopSlots(),
     shopRefreshesAt: now + SHOP_REFRESH_INTERVAL_MS,
+    quests: generateQuests(),
     eggBag: [],
     hallOfFame: existingHallOfFame,
   };

@@ -49,11 +49,14 @@ export function HallOfFameModal({ open, entries, onClose }: HallOfFameModalProps
                   className="flex flex-col items-center rounded-2xl bg-slate-800/70 p-3 text-center ring-1 ring-white/10"
                 >
                   <img
-                    src={getStaticSpriteUrl(entry.finalPokemonId)}
+                    src={getStaticSpriteUrl(entry.finalPokemonId, Boolean(entry.isShiny))}
                     alt={entry.finalName}
                     className="h-16 w-16 object-contain drop-shadow"
                   />
-                  <span className="mt-1 text-sm font-bold text-white">{entry.finalName}</span>
+                  <span className="mt-1 text-sm font-bold text-white">
+                    {entry.isShiny ? '✨ ' : ''}
+                    {entry.finalName}
+                  </span>
                   <span className="text-[11px] font-semibold uppercase tracking-wide text-amber-300">
                     Nv. {entry.levelReached} • {entry.type}
                   </span>
