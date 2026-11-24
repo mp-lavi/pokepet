@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Backpack, ClipboardList, Coins, Smartphone, Sparkles, Volume2, VolumeX } from 'lucide-react';
 import { ActionDeck } from './components/ActionDeck';
+import { AdventureMap } from './components/AdventureMap';
 import { BackpackModal } from './components/BackpackModal';
 import { BattleArena } from './components/BattleArena';
 import { EggStage } from './components/EggStage';
@@ -13,6 +14,8 @@ import { QuestsModal } from './components/QuestsModal';
 import { ShopModal } from './components/ShopModal';
 import { StarterEggPicker } from './components/StarterEggPicker';
 import { StatusBars } from './components/StatusBars';
+import { AdventureFloor, generateAdventureFloor } from './data/mapGenerator';
+import { WildOpponent } from './data/pokemonData';
 import { useGameLoop } from './hooks/useGameLoop';
 import { usePetSensors } from './hooks/usePetSensors';
 import { sound } from './utils/sound';
@@ -22,9 +25,19 @@ export function App() {
   const [shopOpen, setShopOpen] = useState(false);
   const [bagOpen, setBagOpen] = useState(false);
   const [questsOpen, setQuestsOpen] = useState(false);
-  const [inBattle, setInBattle] = useState(false);
+  const [adventureFloor, setAdventureFloor] = useState<AdventureFloor | null>(null);
+  const [adventureHp, setAdventureHp] = useState(0);
+  const [mapLog, setMapLog] = useState<string | null>(null);
+  const [activeEncounter, setActiveEncounter] = useState<{
+    x: number;
+    y: number;
+    enemy: WildOpponent;
+  } | null>(null);
   const [inMinigame, setInMinigame] = useState(false);
   const [muted, setMuted] = useState(() => sound.isMuted());
+
+  const inAdventure = adventureFloor !== null;
+  const inBattle = activeEncounter !== null;
 
   const {
     state,
@@ -44,6 +57,7 @@ export function App() {
 
   const sensors = usePetSensors({
     enabled:
+      !inAdventure &&
       !inBattle &&
       !inMinigame &&
       ((state.phase === 'egg' && state.starterChosen) || state.phase === 'pet'),
@@ -57,13 +71,84 @@ export function App() {
     (q) => !q.claimed && q.progress >= q.target
   );
 
+  const playerMaxHp = 52 + state.level * 12;
+
   const handleStartAdventure = () => {
     if (state.phase !== 'pet' || state.isSleeping) return;
     if (state.energy < 15) {
       actions.awardBattleResult(0, 0, 0, 'Sem energia para aventurar! Descanse primeiro.');
       return;
     }
-    setInBattle(true);
+    setAdventureHp(playerMaxHp);
+    setAdventureFloor(
+      generateAdventureFloor(state.adventureStage, state.level, currentStage.id)
+    );
+    setMapLog(`Explorando Mapa da Fase ${state.adventureStage}!`);
+    setActiveEncounter(null);
+  };
+
+  const handleMapStep = (nx: number, ny: number) => {
+    if (!adventureFloor) return;
+    sound.playTap();
+    const target = adventureFloor.tiles[ny][nx];
+
+    const updatedTiles = adventureFloor.tiles.map((row, ry) =>
+      row.map((cell, rx) => {
+        if (rx !== nx || ry !== ny) return cell;
+        const nextCell = { ...cell, visited: true };
+        if (cell.kind === 'berry' || cell.kind === 'coins' || cell.kind === 'heal') {
+          nextCell.kind = 'empty';
+        }
+        return nextCell;
+      })
+    );
+
+    if (target.kind === 'berry' && target.berryId) {
+      sound.playMinigameCatch();
+      actions.collectMapLoot({ berryId: target.berryId });
+      setMapLog(
+        target.berryId === 'sitrus'
+          ? '🍋 Achou uma Sitrus Berry!'
+          : '🫐 Achou uma Oran Berry!'
+      );
+    } else if (target.kind === 'coins' && target.coinsAmount) {
+      sound.playQuestClaim();
+      actions.collectMapLoot({ coins: target.coinsAmount });
+      setMapLog(`🪙 Achou +${target.coinsAmount} Moedas!`);
+    } else if (target.kind === 'heal') {
+      sound.playEat();
+      const healAmt = Math.round(playerMaxHp * 0.35);
+      const nextHp = Math.min(playerMaxHp, adventureHp + healAmt);
+      setAdventureHp(nextHp);
+      setMapLog(`♨️ Fonte Termal! (+${nextHp - adventureHp} HP)`);
+    } else if (target.kind === 'exit') {
+      sound.playVictory();
+      const nextStage = adventureFloor.stageNumber + 1;
+      actions.advanceAdventureFloor();
+      setAdventureFloor(
+        generateAdventureFloor(nextStage, state.level, currentStage.id)
+      );
+      setMapLog(`🌀 Avançou para o Mapa da Fase ${nextStage}!`);
+      return;
+    } else if (target.kind === 'enemy' && target.enemy) {
+      setAdventureFloor({
+        ...adventureFloor,
+        playerX: nx,
+        playerY: ny,
+        tiles: updatedTiles,
+      });
+      setActiveEncounter({ x: nx, y: ny, enemy: target.enemy });
+      return;
+    } else {
+      setMapLog(null);
+    }
+
+    setAdventureFloor({
+      ...adventureFloor,
+      playerX: nx,
+      playerY: ny,
+      tiles: updatedTiles,
+    });
   };
 
   const handleStartMinigame = () => {
@@ -196,7 +281,7 @@ export function App() {
 
       {/* Interactive Center-Bottom Ground Stage */}
       <main
-        {...(!inBattle && !inMinigame ? sensors.gestureHandlers : {})}
+        {...(!inAdventure && !inBattle && !inMinigame ? sensors.gestureHandlers : {})}
         className="relative z-10 flex flex-1 flex-col items-center justify-end pb-5 touch-none"
       >
         {inMinigame && state.phase === 'pet' ? (
@@ -208,9 +293,11 @@ export function App() {
             }}
             onCancel={() => setInMinigame(false)}
           />
-        ) : inBattle && state.phase === 'pet' ? (
+        ) : inBattle && state.phase === 'pet' && activeEncounter ? (
           <BattleArena
-            adventureStage={state.adventureStage}
+            adventureStage={adventureFloor?.stageNumber ?? state.adventureStage}
+            fixedOpponent={activeEncounter.enemy}
+            initialPlayerHp={adventureHp}
             playerLineId={line.lineId}
             playerStage={currentStage}
             playerType={line.type}
@@ -225,36 +312,75 @@ export function App() {
               coinsGained,
               happinessGained,
               defeatedName,
+              wasBoss,
+              remainingHp,
               droppedEggLineId,
               droppedBerryId,
               droppedStoneId,
-              continueNext,
             }) => {
-              if (!continueNext) setInBattle(false);
               const eggMsg = droppedEggLineId ? ' + 🥚 Ovo Raro!' : '';
               actions.awardBattleResult(
                 xpGained,
-                14,
+                wasBoss ? 14 : 6,
                 happinessGained,
                 `Vitória contra ${defeatedName}! (+${xpGained} XP, +${coinsGained}🪙, +${happinessGained}❤️${eggMsg})`,
                 {
-                  advanceStage: true,
+                  advanceStage: wasBoss,
                   droppedEggLineId,
                   coinsGained,
                   droppedBerryId,
                   droppedStoneId,
                 }
               );
+
+              setAdventureHp(remainingHp);
+              if (wasBoss && adventureFloor) {
+                const nextStage = adventureFloor.stageNumber + 1;
+                setAdventureFloor(
+                  generateAdventureFloor(nextStage, state.level, currentStage.id)
+                );
+                setMapLog(`👑 Chefe derrotado! Bem-vindo à Fase ${nextStage}!`);
+              } else if (adventureFloor) {
+                const clearedTiles = adventureFloor.tiles.map((row, ry) =>
+                  row.map((cell, rx) =>
+                    rx === activeEncounter.x && ry === activeEncounter.y
+                      ? { ...cell, kind: 'empty' as const, enemy: undefined }
+                      : cell
+                  )
+                );
+                setAdventureFloor({ ...adventureFloor, tiles: clearedTiles });
+                setMapLog(`🏆 ${defeatedName} derrotado! (+${xpGained} XP)`);
+              }
+              setActiveEncounter(null);
             }}
             onDefeat={(msg) => {
-              setInBattle(false);
+              setActiveEncounter(null);
+              setAdventureFloor(null);
               actions.awardBattleResult(0, 22, -12, msg);
             }}
-            onExit={(msg) => {
-              setInBattle(false);
-              if (msg) {
-                actions.awardBattleResult(0, 6, 0, msg);
+            onExit={(msg, remainingHp) => {
+              if (typeof remainingHp === 'number') {
+                setAdventureHp(remainingHp);
               }
+              setActiveEncounter(null);
+              if (msg) setMapLog(msg);
+            }}
+          />
+        ) : inAdventure && adventureFloor && state.phase === 'pet' ? (
+          <AdventureMap
+            floor={adventureFloor}
+            playerPokemonId={currentStage.id}
+            playerName={currentStage.name}
+            playerType={line.type}
+            playerShiny={state.isShiny}
+            playerHp={adventureHp}
+            playerMaxHp={playerMaxHp}
+            mapLog={mapLog}
+            onStep={handleMapStep}
+            onExit={() => {
+              setAdventureFloor(null);
+              setActiveEncounter(null);
+              setMapLog(null);
             }}
           />
         ) : (
@@ -372,7 +498,7 @@ export function App() {
           phase={state.phase}
           isSleeping={state.isSleeping}
           isDirty={state.isDirty}
-          inBattle={inBattle || inMinigame}
+          inBattle={inAdventure || inBattle || inMinigame}
           inventory={state.inventory}
           onFeed={actions.feed}
           onOpenShop={() => setShopOpen(true)}

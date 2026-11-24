@@ -636,6 +636,34 @@ export function useGameLoop() {
     });
   }, []);
 
+  const collectMapLoot = useCallback(
+    (loot: { berryId?: string; coins?: number }) => {
+      setState((prev) => {
+        const nextInv = { ...prev.inventory };
+        if (loot.berryId) {
+          nextInv[loot.berryId] = (nextInv[loot.berryId] ?? 0) + 1;
+        }
+        return {
+          ...prev,
+          coins: prev.coins + (loot.coins ?? 0),
+          inventory: nextInv,
+          lastActiveAt: Date.now(),
+        };
+      });
+    },
+    []
+  );
+
+  const advanceAdventureFloor = useCallback(() => {
+    setState((prev) => ({
+      ...prev,
+      adventureStage: prev.adventureStage + 1,
+      energy: clamp(prev.energy - 6),
+      happiness: clamp(prev.happiness + 4),
+      lastActiveAt: Date.now(),
+    }));
+  }, []);
+
   const finishMinigame = useCallback(
     (score: number) => {
       const happinessGain = Math.min(32, 12 + score * 2);
@@ -870,6 +898,8 @@ export function useGameLoop() {
       refreshShop,
       useEvolutionStone,
       consumeBattleBerry,
+      collectMapLoot,
+      advanceAdventureFloor,
       finishMinigame,
       claimQuest,
       play,

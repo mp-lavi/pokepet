@@ -17,6 +17,8 @@ import { sound } from '../utils/sound';
 
 interface BattleArenaProps {
   adventureStage: number;
+  fixedOpponent?: WildOpponent;
+  initialPlayerHp?: number;
   playerLineId: string;
   playerStage: PokemonStage;
   playerType: PokemonType;
@@ -31,13 +33,15 @@ interface BattleArenaProps {
     coinsGained: number;
     happinessGained: number;
     defeatedName: string;
+    wasBoss: boolean;
+    remainingHp: number;
     droppedEggLineId?: string;
     droppedBerryId?: string;
     droppedStoneId?: string;
     continueNext: boolean;
   }) => void;
   onDefeat: (message: string) => void;
-  onExit: (message?: string) => void;
+  onExit: (message?: string, remainingHp?: number) => void;
 }
 
 function BattleSprite({
@@ -96,6 +100,8 @@ function HpBar({ current, max }: { current: number; max: number }) {
 
 export function BattleArena({
   adventureStage,
+  fixedOpponent,
+  initialPlayerHp,
   playerLineId,
   playerStage,
   playerType,
@@ -111,10 +117,10 @@ export function BattleArena({
 }: BattleArenaProps) {
   const [stageNum, setStageNum] = useState(adventureStage);
   const [opponent, setOpponent] = useState<WildOpponent>(() =>
-    spawnWildOpponent(adventureStage, playerLevel, playerStage.id)
+    fixedOpponent ?? spawnWildOpponent(adventureStage, playerLevel, playerStage.id)
   );
   const playerMaxHp = 52 + playerLevel * 12;
-  const [playerHp, setPlayerHp] = useState(playerMaxHp);
+  const [playerHp, setPlayerHp] = useState(initialPlayerHp ?? playerMaxHp);
   const [enemyHp, setEnemyHp] = useState(opponent.maxHp);
   const [busy, setBusy] = useState(false);
   const [playerHit, setPlayerHit] = useState(false);
@@ -309,6 +315,8 @@ export function BattleArena({
       coinsGained: victoryInfo.coinsGained + bonusCoins,
       happinessGained: victoryInfo.happinessGained,
       defeatedName: opponent.name,
+      wasBoss: opponent.isBoss,
+      remainingHp: nextHp,
       droppedEggLineId: victoryInfo.droppedEggLineId,
       droppedBerryId: victoryInfo.droppedBerry?.id,
       droppedStoneId: victoryInfo.droppedStone?.id,
@@ -438,17 +446,19 @@ export function BattleArena({
             <button
               type="button"
               onClick={() => handleNextOrReturn(false)}
-              className="flex-1 rounded-xl bg-slate-800 py-2 text-[11px] font-bold text-slate-200 ring-1 ring-white/10 hover:bg-slate-700 active:scale-95"
-            >
-              Voltar p/ Casa
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNextOrReturn(true)}
               className="flex-1 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 py-2 text-[11px] font-extrabold text-slate-950 shadow-md active:scale-95"
             >
-              Fase {stageNum + 1} →
+              {fixedOpponent ? (opponent.isBoss ? `Ir para Fase ${stageNum + 1} →` : 'Continuar no Mapa →') : 'Voltar p/ Casa'}
             </button>
+            {!fixedOpponent && (
+              <button
+                type="button"
+                onClick={() => handleNextOrReturn(true)}
+                className="flex-1 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 py-2 text-[11px] font-extrabold text-slate-950 shadow-md active:scale-95"
+              >
+                Fase {stageNum + 1} →
+              </button>
+            )}
           </div>
         </div>
       ) : (
@@ -471,7 +481,7 @@ export function BattleArena({
             <button
               type="button"
               disabled={busy}
-              onClick={() => onExit('Você fugiu da batalha em segurança.')}
+              onClick={() => onExit('Você fugiu da batalha em segurança.', playerHp)}
               className="shrink-0 rounded-lg bg-slate-800 px-2 py-1 text-[10px] font-bold text-slate-300 ring-1 ring-white/10 hover:bg-slate-700 disabled:opacity-40"
             >
               Fugir
