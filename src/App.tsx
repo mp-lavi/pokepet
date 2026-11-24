@@ -176,6 +176,26 @@ export function App() {
         }`}
       />
 
+      {/* Full-Screen Procedural Exploration Map */}
+      {inAdventure && !inBattle && adventureFloor && state.phase === 'pet' && (
+        <AdventureMap
+          floor={adventureFloor}
+          playerPokemonId={currentStage.id}
+          playerName={currentStage.name}
+          playerType={line.type}
+          playerShiny={state.isShiny}
+          playerHp={adventureHp}
+          playerMaxHp={playerMaxHp}
+          mapLog={mapLog}
+          onStep={handleMapStep}
+          onExit={() => {
+            setAdventureFloor(null);
+            setActiveEncounter(null);
+            setMapLog(null);
+          }}
+        />
+      )}
+
       {/* Floating Top HUD (Header + Status Bars) */}
       <header className="relative z-20 flex flex-col gap-2 px-3 pt-3">
         <div className="flex items-center justify-between gap-2">
@@ -364,23 +384,6 @@ export function App() {
               }
               setActiveEncounter(null);
               if (msg) setMapLog(msg);
-            }}
-          />
-        ) : inAdventure && adventureFloor && state.phase === 'pet' ? (
-          <AdventureMap
-            floor={adventureFloor}
-            playerPokemonId={currentStage.id}
-            playerName={currentStage.name}
-            playerType={line.type}
-            playerShiny={state.isShiny}
-            playerHp={adventureHp}
-            playerMaxHp={playerMaxHp}
-            mapLog={mapLog}
-            onStep={handleMapStep}
-            onExit={() => {
-              setAdventureFloor(null);
-              setActiveEncounter(null);
-              setMapLog(null);
             }}
           />
         ) : (

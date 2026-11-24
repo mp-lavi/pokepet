@@ -41,10 +41,24 @@ function loadSavedState(): GameState {
     const elapsedMin = Math.min(24 * 60, Math.max(0, (now - (parsed.lastActiveAt ?? now)) / 60000));
 
     if (parsed.phase === 'pet' && elapsedMin > 0.2) {
+      const currentHour = new Date(now).getHours();
+      const isNightHours = currentHour >= 22 || currentHour < 6;
+
       if (parsed.isSleeping) {
-        parsed.energy = clamp(parsed.energy + elapsedMin * 1.6);
-        parsed.hunger = clamp(parsed.hunger - elapsedMin * 0.25);
-        parsed.happiness = clamp(parsed.happiness - elapsedMin * 0.15);
+        parsed.energy = clamp(parsed.energy + elapsedMin * (isNightHours ? 2.2 : 1.6));
+        parsed.hunger = clamp(parsed.hunger - elapsedMin * 0.2);
+        parsed.happiness = clamp(parsed.happiness - elapsedMin * 0.12);
+      } else if (elapsedMin >= 10) {
+        // Hybrid idle rest: when away >= 10 min, the pet rests automatically
+        // recovering energy up to at least 50% (or more at night)
+        const rate = isNightHours ? 2.0 : 1.2;
+        const recovered = clamp(Math.max(50, parsed.energy + elapsedMin * rate));
+        parsed.energy = Math.max(parsed.energy, recovered);
+        parsed.hunger = clamp(parsed.hunger - elapsedMin * 0.35);
+        parsed.happiness = clamp(parsed.happiness - elapsedMin * 0.22);
+        if (isNightHours) {
+          parsed.isSleeping = true;
+        }
       } else {
         parsed.hunger = clamp(parsed.hunger - elapsedMin * 0.55);
         parsed.happiness = clamp(parsed.happiness - elapsedMin * 0.4);

@@ -14,6 +14,7 @@ export interface MapTile {
   y: number;
   kind: MapTileKind;
   visited: boolean;
+  isPath: boolean;
   berryId?: 'oran' | 'sitrus';
   coinsAmount?: number;
   enemy?: WildOpponent;
@@ -34,8 +35,8 @@ export function generateAdventureFloor(
   playerLevel: number,
   excludePokemonId: number
 ): AdventureFloor {
-  const width = 5;
-  const height = 5;
+  const width = 6;
+  const height = 8;
   const isBossFloor = stageNumber > 0 && stageNumber % 5 === 0;
 
   const tiles: MapTile[][] = Array.from({ length: height }, (_, y) =>
@@ -44,13 +45,14 @@ export function generateAdventureFloor(
       y,
       kind: 'empty' as MapTileKind,
       visited: false,
+      isPath: false,
     }))
   );
 
-  // Start at bottom-left, exit at top-right
-  const startX = 0;
+  // Start near bottom-left, exit near top-right
+  const startX = 1;
   const startY = height - 1;
-  const exitX = width - 1;
+  const exitX = width - 2;
   const exitY = 0;
 
   // Carve a guaranteed winding path from start to exit
@@ -58,19 +60,25 @@ export function generateAdventureFloor(
   let cx = startX;
   let cy = startY;
   guaranteedPath.add(`${cx},${cy}`);
+  tiles[cy][cx].isPath = true;
+
   while (cx !== exitX || cy !== exitY) {
-    if (cx < exitX && (cy === exitY || Math.random() < 0.5)) {
-      cx += 1;
-    } else if (cy > exitY) {
+    const r = Math.random();
+    if (cy > exitY && (cx === exitX || r < 0.62)) {
       cy -= 1;
+    } else if (cx < exitX) {
+      cx += 1;
+    } else if (cx > exitX) {
+      cx -= 1;
     }
     guaranteedPath.add(`${cx},${cy}`);
+    tiles[cy][cx].isPath = true;
   }
 
-  // Place walls on non-path tiles (~22% chance)
+  // Place natural obstacles on non-path tiles (~26% chance)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      if (!guaranteedPath.has(`${x},${y}`) && Math.random() < 0.24) {
+      if (!guaranteedPath.has(`${x},${y}`) && Math.random() < 0.26) {
         tiles[y][x].kind = 'wall';
       }
     }
@@ -104,31 +112,32 @@ export function generateAdventureFloor(
 
   const shuffled = [...openTiles].sort(() => Math.random() - 0.5);
 
-  // Place 2-3 Berries
-  const berryCount = 2 + (Math.random() < 0.4 ? 1 : 0);
+  // Place 3-4 Berries
+  const berryCount = 3 + (Math.random() < 0.5 ? 1 : 0);
   for (let i = 0; i < berryCount && shuffled.length > 0; i++) {
     const t = shuffled.pop()!;
     t.kind = 'berry';
-    t.berryId = Math.random() < 0.28 ? 'sitrus' : 'oran';
+    t.berryId = Math.random() < 0.32 ? 'sitrus' : 'oran';
   }
 
-  // Place 1-2 Coin Chests
-  const coinCount = 1 + (Math.random() < 0.5 ? 1 : 0);
+  // Place 2-3 Coin Chests
+  const coinCount = 2 + (Math.random() < 0.5 ? 1 : 0);
   for (let i = 0; i < coinCount && shuffled.length > 0; i++) {
     const t = shuffled.pop()!;
     t.kind = 'coins';
-    t.coinsAmount = 18 + Math.floor(Math.random() * 20);
+    t.coinsAmount = 18 + Math.floor(Math.random() * 22);
   }
 
-  // Place 1 Healing Spring (~55% chance)
-  if (Math.random() < 0.55 && shuffled.length > 0) {
+  // Place 1-2 Healing Springs
+  const healCount = Math.random() < 0.5 ? 2 : 1;
+  for (let i = 0; i < healCount && shuffled.length > 0; i++) {
     const t = shuffled.pop()!;
     t.kind = 'heal';
   }
 
-  // Place 2-3 Wild Enemies (using non-boss stageNumber so they are regular wilds)
+  // Place 3-4 Wild Enemies
   const regularStage = isBossFloor ? Math.max(1, stageNumber - 1) : stageNumber;
-  const enemyCount = 2 + (Math.random() < 0.45 ? 1 : 0);
+  const enemyCount = 3 + (Math.random() < 0.5 ? 1 : 0);
   for (let i = 0; i < enemyCount && shuffled.length > 0; i++) {
     const t = shuffled.pop()!;
     t.kind = 'enemy';
